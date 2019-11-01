@@ -2,6 +2,7 @@ from __future__ import print_function
 from __future__ import unicode_literals
 
 import numpy as np
+from scipy.signal import convolve
 
 class Utils:
     def __init__(self):
@@ -46,3 +47,12 @@ class Utils:
             return a, b
         else:
             return a, b, var_a
+
+#conv2d(S1, S2, mode) first convolves each column of A with the vector
+#H1 and then convolves each row of the result with the vector H2. 
+def conv2d(s1, s2, mode, method, axis = 1):
+
+    conv = lambda approx: convolve(approx, s2, mode = 'full', method='direct')
+    s1 = np.apply_along_axis(conv, axis, s1)    
+    return np.array(s1)
+

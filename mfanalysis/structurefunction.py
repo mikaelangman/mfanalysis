@@ -58,7 +58,6 @@ class StructureFunction:
         """
         self.zeta = np.zeros(len(self.q))
         self.intercept = np.zeros(len(self.q))
-
          
         x  = np.arange(self.j1, self.j2+1)
 

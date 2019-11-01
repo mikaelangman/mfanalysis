@@ -27,11 +27,12 @@ import warnings
 import pywt
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.signal  import convolve
+from scipy.signal import convolve
 from .cumulants import *
 from .structurefunction import *
 from .multiresquantity import *
 from .mfspectrum import *
+from .utils import conv2d
 
 from .bivariate_structurefunction import *
 from .bivariate_cumulants import *
@@ -197,6 +198,7 @@ class MFA:
             else:
                 self.formalism = 'p-leader'
 
+    
 
     def _wavelet_analysis(self, signal):
         """
@@ -218,7 +220,8 @@ class MFA:
         self.wavelet_leaders = MultiResolutionQuantity(self.formalism)
 
         # Check maximum decomposition level
-        data_len = len(signal)
+        data_len = signal.size
+    
         max_level = int(np.floor( np.log2( data_len / (self.filter_len+1) ) ))
         self.max_level = min( int(np.floor(np.log2(data_len))), max_level)
         #self.max_level = min(self.max_level, self.j2)
@@ -241,124 +244,419 @@ Max level and j2 set to ", self.max_level)
 
         # Wavelet decomposition
         approx = signal
+
         for j in range(1, self.max_level+1):
-            nj_temp = len(approx)
 
-            # apply filters
-            # note: 'direct' method MUST be used, since there are elements
-            # that are np.inf inside approx
-            high    = convolve(approx, self.hi, mode = 'full', method='direct')
-            low     = convolve(approx, self.lo, mode = 'full', method='direct')
+            #2D signal
+            if len(approx.shape) == 2:                
+               
+                nj_temp = np.array(approx.shape)
 
-            high[np.isnan(high)] = np.inf
-            low[np.isnan(low)] = np.inf
-
-            # index of first good value
-            fp = self.filter_len - 2
-            # index of last good value
-            lp = nj_temp - 1
-
-            # replace border with Inf
-            high[0:fp]  = np.inf
-            low[0:fp]   = np.inf
-            high[lp+1:] = np.inf
-            low[lp+1:]  = np.inf
+                #border effect
+                fp = self.filter_len - 1     # index of first good value
+                lp = nj_temp - 1 # index of last good value
 
 
-            # offsets
-            x0 = 2
-            x0Appro = self.filter_len #2*self.nb_vanishing_moments
+                # offsets
+                x0 = 2
+                x0Appro = self.filter_len #2*self.nb_vanishing_moments
+                # apply filters
+                # note: 'direct' method MUST be used, since there are elements
+                # that are np.inf inside approx
 
-            # centering and subsampling
-            detail_idx = np.arange(0, nj_temp, 2) + x0 - 1
-            approx_idx = np.arange(0, nj_temp, 2) + x0Appro - 1
-            detail = high[detail_idx]
-            approx = low[approx_idx]
-
-            # normalization
-            detail = detail*2**(j*(0.5-1/self.normalization))
-
-            # fractional integration
-            detail = detail*2.0**(self.gamint*j)
-
-            # remove infinite values and store wavelet coefficients
-            finite_idx_coef  = np.logical_not( np.isinf( np.abs(detail) )  )
-
-            if np.sum(finite_idx_coef) == 0:
-                self.max_level = j-1
-                break
-            self.wavelet_coeffs.add_values(detail[finite_idx_coef], j)
+               # %-- OH convolution and subsampling
+               # OH = conv2(LL, gg1); OH(isnan (OH)) = Inf;
+               # OH(:, 1         : fp - 1) = Inf;
+               # OH(:, lp(2) + 1 : end   ) = Inf;
+               # OH = OH(:, (1 : 2 : njtemp(2)) + x0 - 1);
 
 
-            # wavelet leaders
-            if compute_leaders:
-                detail_abs = np.abs(detail)
-                if j == 1:
-                    if self.formalism == 'p-leader':
-                        # detail_abs = (2.0**j)*(detail_abs**self.p)
-                        detail_abs = np.power(2., j)*np.power(detail_abs,self.p)
-                        leaders = np.vstack((
-                                    detail_abs[0:len(detail_abs)-2],
-                                    detail_abs[1:len(detail_abs)-1],
-                                    detail_abs[2:len(detail_abs)]
-                                    )).sum(axis = 0)
-                        #leaders = (2.0**(-j)*leaders)**(1.0/self.p)
-                        leaders = np.power(  np.power(2., -j)*leaders,
-                                             1./self.p )
+                OH = conv2d(approx, self.hi, mode = 'full', method='direct')
+                OH[:, :fp] = np.inf
+                OH[:, lp[1]+1:] = np.inf
+                OH_idx = np.arange(0, nj_temp[1], 2) + x0 - 1
+                OH = OH[:, OH_idx]
+                OH[np.isnan(OH)] = np.inf
+
+               # %-- HH convolution and subsampling
+               # HH = conv2(OH, gg1'); HH(isnan (HH)) = Inf;
+               #
+               # HH(1         : fp - 1 , :) = Inf;
+               # HH(lp(1) + 1 : end    , :) = Inf;
+               # HH = HH((1 : 2 : njtemp(1)) + x0 - 1, :);
+
+                HH = conv2d(OH, self.hi, mode = 'full', method='direct', axis=0)
+                HH[:fp, :] = np.inf
+                HH[lp[0]+1:, :] = np.inf
+                HH_idx = np.arange(0, nj_temp[0], 2) + x0 - 1
+                HH = HH[HH_idx, :] 
+                HH[np.isnan(HH)] = np.inf
+
+               # %-- LH convolution and subsampling
+               # LH = conv2 (OH, hh1'); LH(isnan (LH)) = Inf;
+               # LH(1         : fp - 1, :) = Inf;
+               # LH(lp(1) + 1 : end   , :) = Inf;
+               # LH = LH((1 : 2 : njtemp(1)) + x0Appro - 1, :);
+
+                LH = conv2d(OH, self.lo, mode = 'full', method='direct', axis=0)
+                LH[:fp, :] = np.inf
+                LH[lp[0]+1:, :] = np.inf
+                LH_idx = np.arange(0, nj_temp[0], 2) + x0Appro - 1
+                LH = LH[LH_idx, :] 
+                LH[np.isnan(LH)] = np.inf
+
+                #%-- OL convolution and subsampling
+            #   OL = conv2 (LL, hh1); OL(isnan (OL)) = Inf;
+            #   OL(:, 1         : fp - 1) = Inf;
+            #   OL(:, lp(2) + 1 : end   ) = Inf;
+            #   OL = OL(:, (1 : 2 : njtemp(2)) + x0Appro - 1);
+
+                OL = conv2d(approx, self.lo, mode = 'full', method='direct')
+                OL[:, 0:fp] = np.inf
+                OL[:, lp[1]+1:] = np.inf
+                OL_idx = np.arange(0, nj_temp[1], 2) + x0Appro - 1
+                OL = OL[:, OL_idx]
+                OL[np.isnan(OL)] = np.inf
+                #%-- HL convolution and subsampling
+                #HL = conv2 (OL, gg1'); HL(isnan (HL)) = Inf;
+                #HL(1         : fp - 1, :) = Inf;
+                #HL(lp(1) + 1 : end   , :) = Inf;
+                #HL=HL((1 : 2 : njtemp(1)) + x0 - 1, :);
+
+                HL = conv2d(OL, self.hi, mode = 'full', method='direct',  axis=0)
+                HL[:fp, :] = np.inf
+                HL[lp[0]+1:, :] = np.inf
+                HL_idx = np.arange(0, nj_temp[0], 2) + x0 - 1
+                HL = HL[HL_idx, :] 
+                HL[np.isnan(HL)] = np.inf
+                #%-- LL convolution and subsampling
+                #LL = conv2 (OL, hh1'); LL(isnan (LL)) = Inf;
+                #LL(1         : fp - 1 , :) = Inf;
+                #LL(lp(1) + 1 : end    , :) = Inf;
+                #LL = LL((1 : 2 : njtemp(1)) + x0Appro - 1, :);
+
+                LL = conv2d(OL, self.lo, mode = 'full', method='direct', axis=0)
+                LL[0:fp, :] = np.inf
+                LL[lp[0]+1:, :] = np.inf
+                LL_idx = np.arange(0, nj_temp[0], 2) + x0Appro - 1
+                LL = LL[LL_idx, :]
+                LL[np.isnan(LL)] = np.inf
+
+                approx = LL
+                details = [LH, HL, HH]
+
+
+#                approx[np.isnan(approx)] = np.inf
+#                #print(np.ceil(approx))
+#
+#                for i in range(len(details)):
+#                    detail = details[i]
+#                    detail[np.isnan(detail)] = np.inf
+#                    details[i] = detail
+#
+#                # index of first good value
+#                fp = int( ( self.filter_len - 1 )/2 )
+#                # index of last good value
+#                lp = int( (nj_temp - 1)/2 )
+#
+#
+#                approx[0:fp, :] = np.inf
+#                approx[lp+1:, :] = np.inf
+#
+#                approx[:, 0:fp] = np.inf
+#                approx[:, lp+1:] = np.inf
+#
+#                for idx in range(len(details)):
+#                    details[idx][0:fp, :] = np.inf
+#                    details[idx][lp+1:, :] = np.inf
+#                    details[idx][:, 0:fp] = np.inf
+#                    details[idx][:, lp+1:] = np.inf
+#
+#                #print(np.ceil(details[0]))
+#                #print(details[0].shape, approx.shape)
+#
+#                # replace border with Inf and center content
+#    
+#                finite_approx = approx[fp+2:lp-1, fp+2:lp-1]
+#                approx = np.full(approx.shape, np.inf)
+#                approx[0:lp-5, 0:lp-5] = finite_approx
+#
+#                for idx in range(len(details)):
+#                    finite_details = details[idx][0:lp-5, 0:lp-5]
+#                    details[idx] = np.full(details[idx].shape, np.inf)
+#                    details[idx][0:lp-5, 0:lp-5] = finite_details
+#
+
+
+
+                # normalization 
+                details = [detail*2**(j*(0.5-1/self.normalization)) for detail in details]
+
+                # fractional integration
+                details = [detail*2.0**(self.gamint*j) for detail in details]
+
+                # remove infinite values and store wavelet coefficients
+
+                startsx = []
+                startsy = []
+                endsx = []
+                endsy = []
+
+                for detail in details:
+                    finite_idx_coef = np.where(np.abs(detail) != np.inf)
+                    if finite_idx_coef[0].size == 0:
+                        self.max_level = j-1
+                        self.j2_eff = min(self.max_level, self.j2) # "effective" j2, used in linear regression
+                        return
+
+                    startsx.append(min(finite_idx_coef[0]))
+                    startsy.append(min(finite_idx_coef[1]))
+                    endsx.append(max(finite_idx_coef[0]))
+                    endsy.append(max(finite_idx_coef[1]))
+
+                startx = max(startsx)
+                starty = max(startsy)
+                endx = min(endsx) + 1
+                endy = min(endsy) + 1
+
+                finite_coefs = [detail[startx:endx, starty:endy] for detail in details]
+                
+                self.wavelet_coeffs.add_values(finite_coefs, j)
+
+                # wavelet leaders
+                if compute_leaders:
+                    details_abs = [np.abs(detail) for detail in details]
+
+                    if j == 1:
+                        if self.formalism == 'p-leader':
+                        #    # detail_abs = (2.0**j)*(detail_abs**self.p)
+                            details_abs = [np.power(2., 2*j)*np.power(detail_abs,self.p) for detail_abs in details_abs]
+                        #    leaders = np.zeros((details_abs[0].shape[0]-2, details_abs[0].shape[1]-2))
+#
+                        #    for row in range(leaders.shape[0]):
+                        #        for col in range(leaders.shape[1]):
+                        #            leaders[row][col] = np.sum([detail_abs[row:row+2, col:col+2] for detail_abs in details_abs])
+                        #            
+                        #    #leaders = (2.0**(-j)*leaders)**(1.0/self.p)
+#
+                        #    leaders = np.power(  np.power(2., -j)*leaders,
+                        #                        1./self.p )
+                        #    
+#
+                        #else:
+                        #    leaders = np.zeros((details_abs[0].shape[0]-2, details_abs[0].shape[1]-2))
+#
+                        #    for row in range(leaders.shape[0]):
+                        #        for col in range(leaders.shape[1]):
+                        #            leaders[row][col] = np.max([detail_abs[row:row+2, col:col+2] for detail_abs in details_abs])
+
+                        sans_voisin = details_abs
 
                     else:
-                        leaders = np.vstack((
-                                    detail_abs[0:len(detail_abs)-2],
-                                    detail_abs[1:len(detail_abs)-1],
-                                    detail_abs[2:len(detail_abs)]
-                                    )).max(axis=0)
-                    sans_voisin = detail_abs
+                        max_index = np.floor( np.array(sans_voisin[0].shape)/2 ).astype(int)
 
-                else:
-                    max_index    = int(np.floor( len(sans_voisin)/2 ))
-                    detail_abs   = detail_abs[:max_index]
+                        for idx in range(len(sans_voisin)):
+                            sans_voisin[idx] = self._compute_leader_sans_voisin(details_abs[idx], sans_voisin[idx], max_index, j)
 
-                    if self.formalism == 'p-leader':
-                        #detail_abs = (2**j)*(detail_abs**self.p)
-                        detail_abs = np.power(2., j)*np.power(detail_abs,self.p)
-                        sans_voisin = np.vstack((
-                                    detail_abs,
-                                    sans_voisin[0:2*max_index:2],
-                                    sans_voisin[1:2*max_index:2]
-                                    )).sum(axis=0)
+                    leaders = []
+                    
+                    for idx in range(len(finite_coefs)):
+                        leaders.append(self._compute_leader_from_neigbourhood(sans_voisin[idx]))
 
-                        leaders = np.vstack((
-                                    sans_voisin[0:len(sans_voisin)-2],
-                                    sans_voisin[1:len(sans_voisin)-1],
-                                    sans_voisin[2:len(sans_voisin)]
-                                    )).sum(axis=0)
+                        #details_abs = [detail_abs[:max_index[0], :max_index[1]] for detail_abs in details_abs]
+                        #
+                        #down_sampled_sv = [sans_voisin[0:2*max_index[0]:2, 0:2*max_index[1]:2, :]]
+                        #down_sampled_sv.append(sans_voisin[1:2*max_index[0]:2, 0:2*max_index[1]:2, :])
+                        #down_sampled_sv.append(sans_voisin[0:2*max_index[0]:2, 1:2*max_index[1]:2, :])
+                        #down_sampled_sv.append(sans_voisin[1:2*max_index[0]:2, 1:2*max_index[1]:2, :])
+#
+                        #if self.formalism == 'p-leader':
+                        #    #detail_abs = (2**j)*(detail_abs**self.p)
+                        #    details_abs = [np.power(2., j)*np.power(detail_abs,self.p) for detail_abs in details_abs]
+#
+                        #    print(sans_voisin.shape)
+#
+                        #    sans_voisin = np.sum(down_sampled_sv + details_abs, axis=0)                            
+                        #    leaders = np.zeros((sans_voisin.shape[0]-2, sans_voisin.shape[1]-2))
+#
+                        #    for row in range(leaders.shape[0]):
+                        #        for col in range(leaders.shape[1]):
+                        #            leaders[row][col] = np.sum(sans_voisin[row:row+2, col:col+2, :])
+#
+                        #    #print(np.ceil(detail_abs_combined))
+#
+                        #    #leaders = (2.0**(-j)*leaders)**(1/self.p)
+                        #    leaders = np.power(  np.power(2., -j)*leaders,
+                        #                        1./self.p )
+                        #else:
+                        #    sans_voisin = np.stack(details_abs + down_sampled_sv, axis=2).max(axis=2)
+#
+                        #    leaders = np.zeros((sans_voisin.shape[0]-2, sans_voisin.shape[1]-2))
+#
+                        #    for row in range(leaders.shape[0]):
+                        #        for col in range(leaders.shape[1]):
+                        #            leaders[row][col] = np.max(sans_voisin[row:row+2, col:col+2, :])
+                        #    print(np.ceil(leaders))
 
-                        #leaders = (2.0**(-j)*leaders)**(1/self.p)
-                        leaders = np.power(  np.power(2., -j)*leaders,
-                                             1./self.p )
+                    # remove infinite values and store wavelet leaders
+                    #print(leaders[0].shape)
+                    #print(np.ceil(leaders[0]))
+
+                    startsx = []
+                    startsy = []
+                    endsx = []
+                    endsy = []
+
+                    for leader in leaders:
+                        finite_idx_wl = np.where(np.abs(leader) != np.inf)
+
+                        startsx.append(min(finite_idx_wl[0]))
+                        startsy.append(min(finite_idx_wl[1]))
+                        endsx.append(max(finite_idx_wl[0]))
+                        endsy.append(max(finite_idx_wl[1]))
+
+                    startx = max(startsx)
+                    starty = max(startsy)
+                    endx = min(endsx) +1
+                    endy = min(endsy) +1
+                    
+                    finite_wls = [leader[startx:endx, starty:endy] for leader in leaders]
+                    
+                    if self.formalism == "p-leader":
+                        finite_wl = sum(finite_wls)
+
                     else:
-                        sans_voisin = np.vstack((
-                                    detail_abs,
-                                    sans_voisin[0:2*max_index:2],
-                                    sans_voisin[1:2*max_index:2]
-                                    )).max(axis=0)
-                        leaders = np.vstack((
-                                    sans_voisin[0:len(sans_voisin)-2],
-                                    sans_voisin[1:len(sans_voisin)-1],
-                                    sans_voisin[2:len(sans_voisin)]
-                                    )).max(axis=0)
+                        finite_wl = max(finite_wls)
 
-                # remove infinite values and store wavelet leaders
-                finite_idx_wl  = np.logical_not( np.isinf( np.abs(leaders) )  )
-                if np.sum(finite_idx_wl) == 0:
+                    if finite_wl.size == 0:
+                        self.max_level = j-1
+                        self.j2_eff = min(self.max_level, self.j2) # "effective" j2, used in linear regression
+                        break
+
+                    if self.formalism == "p-leader":
+                        finite_wl = np.power(  np.power(2., 2*-j)*finite_wl, 1./self.p )
+
+                    self.wavelet_leaders.add_values(finite_wl, j)
+
+
+            #1D signal
+            else:
+
+                # apply filters
+                # note: 'direct' method MUST be used, since there are elements
+                # that are np.inf inside approx
+                high    = convolve(approx, self.hi, mode = 'full', method='direct')
+                low     = convolve(approx, self.lo, mode = 'full', method='direct')
+
+                high[np.isnan(high)] = np.inf
+                low[np.isnan(low)] = np.inf
+
+                # index of first good value
+                fp = self.filter_len - 2
+                # index of last good value
+                lp = nj_temp - 1
+
+                # replace border with Inf
+                high[0:fp]  = np.inf
+                low[0:fp]   = np.inf
+                high[lp+1:] = np.inf
+                low[lp+1:]  = np.inf
+
+
+                # offsets
+                x0 = 2
+                x0Appro = self.filter_len #2*self.nb_vanishing_moments
+
+                # centering and subsampling
+                detail_idx = np.arange(0, nj_temp, 2) + x0 - 1
+                approx_idx = np.arange(0, nj_temp, 2) + x0Appro - 1
+                detail = high[detail_idx]
+                approx = low[approx_idx]
+
+                # normalization
+                detail = detail*2**(j*(0.5-1/self.normalization))
+
+                # fractional integration
+                detail = detail*2.0**(self.gamint*j)
+
+                # remove infinite values and store wavelet coefficients
+                finite_idx_coef  = np.logical_not( np.isinf( np.abs(detail) )  )
+
+                if np.sum(finite_idx_coef) == 0:
                     self.max_level = j-1
                     break
-                self.wavelet_leaders.add_values(leaders[finite_idx_wl], j)
+                self.wavelet_coeffs.add_values(detail[finite_idx_coef], j)
+
+
+                # wavelet leaders
+                if compute_leaders:
+                    detail_abs = np.abs(detail)
+                    if j == 1:
+                        if self.formalism == 'p-leader':
+                            # detail_abs = (2.0**j)*(detail_abs**self.p)
+                            detail_abs = np.power(2., j)*np.power(detail_abs,self.p)
+                            leaders = np.vstack((
+                                        detail_abs[0:len(detail_abs)-2],
+                                        detail_abs[1:len(detail_abs)-1],
+                                        detail_abs[2:len(detail_abs)]
+                                        )).sum(axis = 0)
+                            #leaders = (2.0**(-j)*leaders)**(1.0/self.p)
+                            leaders = np.power(  np.power(2., -j)*leaders,
+                                                1./self.p )
+
+                        else:
+                            leaders = np.vstack((
+                                        detail_abs[0:len(detail_abs)-2],
+                                        detail_abs[1:len(detail_abs)-1],
+                                        detail_abs[2:len(detail_abs)]
+                                        )).max(axis=0)
+
+                        sans_voisin = detail_abs
+
+                    else:
+                        max_index    = int(np.floor( len(sans_voisin)/2 ))
+                        detail_abs   = detail_abs[:max_index]
+
+                        if self.formalism == 'p-leader':
+                            #detail_abs = (2**j)*(detail_abs**self.p)
+                            detail_abs = np.power(2., j)*np.power(detail_abs,self.p)
+                            sans_voisin = np.vstack((
+                                        detail_abs,
+                                        sans_voisin[0:2*max_index:2],
+                                        sans_voisin[1:2*max_index:2]
+                                        )).sum(axis=0)
+
+                            leaders = np.vstack((
+                                        sans_voisin[0:len(sans_voisin)-2],
+                                        sans_voisin[1:len(sans_voisin)-1],
+                                        sans_voisin[2:len(sans_voisin)]
+                                        )).sum(axis=0)
+
+                            #leaders = (2.0**(-j)*leaders)**(1/self.p)
+                            leaders = np.power(  np.power(2., -j)*leaders,
+                                                1./self.p )
+                        else:
+                            sans_voisin = np.vstack((
+                                        detail_abs,
+                                        sans_voisin[0:2*max_index:2],
+                                        sans_voisin[1:2*max_index:2]
+                                        )).max(axis=0)
+                            leaders = np.vstack((
+                                        sans_voisin[0:len(sans_voisin)-2],
+                                        sans_voisin[1:len(sans_voisin)-1],
+                                        sans_voisin[2:len(sans_voisin)]
+                                        )).max(axis=0)
+
+                    # remove infinite values and store wavelet leaders
+                    finite_idx_wl  = np.logical_not( np.isinf( np.abs(leaders) )  )
+                    if np.sum(finite_idx_wl) == 0:
+                        self.max_level = j-1
+                        break
+                    self.wavelet_leaders.add_values(leaders[finite_idx_wl], j)
 
 
         self.j2_eff = min(self.max_level, self.j2) # "effective" j2, used in linear regression
-
-
+        
     def _estimate_hmin(self):
         """
         Estimate the value of the uniform regularity exponent hmin using
@@ -380,7 +678,6 @@ Max level and j2 set to ", self.max_level)
             nj = self.wavelet_coeffs.get_nj_interv(self.j1, self.j2_eff)
         else:
             nj = np.ones(len(x))
-
 
         # linear regression
         slope, intercept = self.utils.linear_regression(x, y, nj)
@@ -667,3 +964,87 @@ Max level and j2 set to ", self.max_level)
                                              self.j1,
                                              self.j2_eff,
                                              self.wtype)
+
+  #   %===============================================================================
+  #   %- ANCILLARY SUBROUTINES
+  #   %===============================================================================
+  #  function [sansv] = compute_leader_sans_voisin(coef, sansv, nc, p, j)
+  #  % Computes leaders without neighbours from coefs at current scale (j) and
+  #  % leaders sans_voisin at the previous scale.
+  #  % nc indicates the numer of coefficients at curr scale that will be used
+#
+  #      tmp(:, :, 1) = abs (coef(1 : nc(1), 1 : nc(2)));
+  #      if p ~= inf    % p-leaders
+  #          tmp(:, :, 1) = 2 ^ (2 * j) .* tmp(:, :, 1) .^ p;
+  #      end
+  #      tmp(:, :, 2) = sansv(1 : 2 : 2*nc(1) , 1 : 2 : 2*nc(2));
+  #      tmp(:, :, 3) = sansv(2 : 2 : 2*nc(1) , 1 : 2 : 2*nc(2));
+  #      tmp(:, :, 4) = sansv(1 : 2 : 2*nc(1) , 2 : 2 : 2*nc(2));
+  #      tmp(:, :, 5) = sansv(2 : 2 : 2*nc(1) , 2 : 2 : 2*nc(2));
+#
+  #      if p == inf
+  #          sansv = max (tmp, [], 3);  % Trailing singleton dim is squeezed out
+  #      else
+  #          sansv = sum (tmp, 3);  % Trailing singleton dim is squeezed out
+  #      end
+#
+  #  end  % compute_leader_sans_voisin
+
+
+
+    def _compute_leader_sans_voisin(self, coef, sansv, max_index, j):
+
+        tmp = [coef]
+
+        tmp.append(sansv[0:2*max_index[0]:2, 0:2*max_index[1]:2])        
+        tmp.append(sansv[1:2*max_index[0]:2, 0:2*max_index[1]:2])        
+        tmp.append(sansv[0:2*max_index[0]:2, 1:2*max_index[1]:2])        
+        tmp.append(sansv[1:2*max_index[0]:2, 1:2*max_index[1]:2])        
+
+        if self.formalism == 'p-leader': 
+            return sum(tmp)
+        else:
+            return max(tmp)
+
+
+  #       %-------------------------------------------------------------------------------
+  #  function [leader] = compute_leader_from_neigbourhood (sansv, p)
+  #  % Computes each leader from all leaders_sans_voisin in the neighbourhood
+#
+  #      si = size (sansv);
+  #      ls = zeros (2 + si(1), 2 + si(2));
+  #      ls(2 : end-1, 2 : end-1) = sansv;
+  #      tmp(:, :, 1) = ls(1 : end - 2, 1 : end - 2);
+  #      tmp(:, :, 2) = ls(1 : end - 2, 2 : end - 1);
+  #      tmp(:, :, 3) = ls(1 : end - 2, 3 : end    );
+  #      tmp(:, :, 4) = ls(2 : end - 1, 1 : end - 2);
+  #      tmp(:, :, 5) = ls(2 : end - 1, 2 : end - 1);
+  #      tmp(:, :, 6) = ls(2 : end - 1, 3 : end    );
+  #      tmp(:, :, 7) = ls(3 : end    , 1 : end - 2);
+  #      tmp(:, :, 8) = ls(3 : end    , 2 : end - 1);
+  #      tmp(:, :, 9) = ls(3 : end    , 3 : end    );
+#
+  #      if p == inf    % wavelet leaders
+  #          leader = max (tmp, [], 3);
+  #      else    % p-leaders
+  #          leader = sum (tmp, 3);
+  #      end
+#
+  #  end
+  #  %---------
+    def _compute_leader_from_neigbourhood(self, sansv):
+
+        ls = np.zeros(np.array(sansv.shape)+2)
+        ls [1:-1, 1:-1] = sansv
+        tmp = []
+
+        for i in range(3):
+            for j in range(3):
+                endi = ls.shape[0]-(2-i)
+                endj = ls.shape[1]-(2-j)
+                tmp.append(ls[i:endi, j:endj])
+
+        if self.formalism == 'p-leader': 
+            return sum(tmp)
+        else:
+            return max(tmp)

@@ -1,6 +1,7 @@
 from __future__ import print_function
 from __future__ import unicode_literals
 
+import numpy as np
 
 class MultiResolutionQuantity:
     """
@@ -21,7 +22,7 @@ class MultiResolutionQuantity:
 
     def add_values(self, coeffs, j):
         self.values[j] = coeffs
-        self.nj[j]     = len(coeffs)
+        self.nj[j]     = np.array(coeffs).size
 
     def get_nj(self):
         """
