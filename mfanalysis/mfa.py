@@ -26,7 +26,10 @@ website (his PhD thesis in particular, which can be found at https://www.irit.fr
 import warnings
 import pywt
 import numpy as np
+import matplotlib
+matplotlib.use("WebAgg")
 import matplotlib.pyplot as plt
+
 from scipy.signal import convolve
 from .cumulants import *
 from .structurefunction import *
@@ -256,7 +259,6 @@ Max level and j2 set to ", self.max_level)
                 fp = self.filter_len - 1     # index of first good value
                 lp = nj_temp - 1 # index of last good value
 
-
                 # offsets
                 x0 = 2
                 x0Appro = self.filter_len #2*self.nb_vanishing_moments
@@ -269,7 +271,6 @@ Max level and j2 set to ", self.max_level)
                # OH(:, 1         : fp - 1) = Inf;
                # OH(:, lp(2) + 1 : end   ) = Inf;
                # OH = OH(:, (1 : 2 : njtemp(2)) + x0 - 1);
-
 
                 OH = conv2d(approx, self.hi, mode = 'full', method='direct')
                 OH[:, :fp] = np.inf
@@ -453,9 +454,12 @@ Max level and j2 set to ", self.max_level)
                         sans_voisin = details_abs
 
                     else:
-                        max_index = np.floor( np.array(sans_voisin[0].shape)/2 ).astype(int)
+                        max_index = np.floor( np.array(sans_voisin[0].shape)/2 ).astype(int) 
+                        
+                        #print(np.ceil(details))
 
                         for idx in range(len(sans_voisin)):
+                            #print(sans_voisin[idx].shape)
                             sans_voisin[idx] = self._compute_leader_sans_voisin(details_abs[idx], sans_voisin[idx], max_index, j)
 
                     leaders = []
@@ -523,10 +527,10 @@ Max level and j2 set to ", self.max_level)
                     finite_wls = [leader[startx:endx, starty:endy] for leader in leaders]
                     
                     if self.formalism == "p-leader":
-                        finite_wl = sum(finite_wls)
+                        finite_wl = np.sum(finite_wls, axis=0)
 
                     else:
-                        finite_wl = max(finite_wls)
+                        finite_wl = np.max(finite_wls, axis=0)
 
                     if finite_wl.size == 0:
                         self.max_level = j-1
@@ -534,8 +538,7 @@ Max level and j2 set to ", self.max_level)
                         break
 
                     if self.formalism == "p-leader":
-                        finite_wl = np.power(  np.power(2., 2*-j)*finite_wl, 1./self.p )
-
+                        finite_wl = np.power(  np.power(2., -2*j)*finite_wl, 1./self.p )
                     self.wavelet_leaders.add_values(finite_wl, j)
 
 
@@ -994,17 +997,17 @@ Max level and j2 set to ", self.max_level)
 
     def _compute_leader_sans_voisin(self, coef, sansv, max_index, j):
 
-        tmp = [coef]
-
-        tmp.append(sansv[0:2*max_index[0]:2, 0:2*max_index[1]:2])        
-        tmp.append(sansv[1:2*max_index[0]:2, 0:2*max_index[1]:2])        
-        tmp.append(sansv[0:2*max_index[0]:2, 1:2*max_index[1]:2])        
+        tmp = [coef[0:max_index[0], 0:max_index[1]]]
+        print(tmp[0].shape)
+        tmp.append(sansv[0:2*max_index[0]-1:2, 1:2*max_index[1]:2])        
         tmp.append(sansv[1:2*max_index[0]:2, 1:2*max_index[1]:2])        
+        tmp.append(sansv[0:2*max_index[0]-1:2, 0:2*max_index[1]-1:2])        
+        tmp.append(sansv[1:2*max_index[0]:2, 0:2*max_index[1]-1:2])        
 
         if self.formalism == 'p-leader': 
             return sum(tmp)
         else:
-            return max(tmp)
+            return np.max(tmp, axis=0)
 
 
   #       %-------------------------------------------------------------------------------
@@ -1047,4 +1050,4 @@ Max level and j2 set to ", self.max_level)
         if self.formalism == 'p-leader': 
             return sum(tmp)
         else:
-            return max(tmp)
+            return np.max(tmp, axis=0)
