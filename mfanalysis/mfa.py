@@ -27,7 +27,7 @@ import warnings
 import pywt
 import numpy as np
 import matplotlib
-matplotlib.use("WebAgg")
+matplotlib.use("WXAgg")
 import matplotlib.pyplot as plt
 
 from scipy.signal import convolve
@@ -391,7 +391,8 @@ Max level and j2 set to ", self.max_level)
 
 
                 # normalization 
-                details = [detail*2**(j*(0.5-1/self.normalization)) for detail in details]
+                #details = [detail*2**(j*(0.5-1/self.normalization)) for detail in details]
+                details = [detail/(2**(j/self.normalization)) for detail in details]
 
                 # fractional integration
                 details = [detail*2.0**(self.gamint*j) for detail in details]
@@ -402,6 +403,7 @@ Max level and j2 set to ", self.max_level)
                 startsy = []
                 endsx = []
                 endsy = []
+
 
                 for detail in details:
                     finite_idx_coef = np.where(np.abs(detail) != np.inf)
@@ -426,12 +428,14 @@ Max level and j2 set to ", self.max_level)
 
                 # wavelet leaders
                 if compute_leaders:
-                    details_abs = [np.abs(detail) for detail in details]
 
                     if j == 1:
+
+                        sans_voisin = [np.abs(detail) for detail in details]
+
                         if self.formalism == 'p-leader':
                         #    # detail_abs = (2.0**j)*(detail_abs**self.p)
-                            details_abs = [np.power(2., 2*j)*np.power(detail_abs,self.p) for detail_abs in details_abs]
+                            sans_voisin = [2**(2*j)*detail_abs**self.p for detail_abs in sans_voisin]
                         #    leaders = np.zeros((details_abs[0].shape[0]-2, details_abs[0].shape[1]-2))
 #
                         #    for row in range(leaders.shape[0]):
@@ -451,17 +455,14 @@ Max level and j2 set to ", self.max_level)
                         #        for col in range(leaders.shape[1]):
                         #            leaders[row][col] = np.max([detail_abs[row:row+2, col:col+2] for detail_abs in details_abs])
 
-                        sans_voisin = details_abs
-
                     else:
                         max_index = np.floor( np.array(sans_voisin[0].shape)/2 ).astype(int) 
                         
                         #print(np.ceil(details))
 
                         for idx in range(len(sans_voisin)):
-                            #print(sans_voisin[idx].shape)
-                            sans_voisin[idx] = self._compute_leader_sans_voisin(details_abs[idx], sans_voisin[idx], max_index, j)
 
+                            sans_voisin[idx] = self._compute_leader_sans_voisin(details[idx], sans_voisin[idx], max_index, j)
                     leaders = []
                     
                     for idx in range(len(finite_coefs)):
@@ -540,6 +541,8 @@ Max level and j2 set to ", self.max_level)
                     if self.formalism == "p-leader":
                         finite_wl = np.power(  np.power(2., -2*j)*finite_wl, 1./self.p )
                     self.wavelet_leaders.add_values(finite_wl, j)
+                    #print(finite_wl.shape)
+                    #print(finite_wl)
 
 
             #1D signal
@@ -997,8 +1000,11 @@ Max level and j2 set to ", self.max_level)
 
     def _compute_leader_sans_voisin(self, coef, sansv, max_index, j):
 
-        tmp = [coef[0:max_index[0], 0:max_index[1]]]
-        print(tmp[0].shape)
+        tmp = [np.abs(coef[0:max_index[0], 0:max_index[1]])]
+
+        if self.formalism == "p-leader":
+            tmp[0] = 2**(2*j)*tmp[0]**self.p
+
         tmp.append(sansv[0:2*max_index[0]-1:2, 1:2*max_index[1]:2])        
         tmp.append(sansv[1:2*max_index[0]:2, 1:2*max_index[1]:2])        
         tmp.append(sansv[0:2*max_index[0]-1:2, 0:2*max_index[1]-1:2])        
