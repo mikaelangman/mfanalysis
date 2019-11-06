@@ -220,10 +220,16 @@ class MFA:
 
         # Initialize structures
         self.wavelet_coeffs = MultiResolutionQuantity(self.formalism)
+        self.wavelet_coeffs_xpos = MultiResolutionQuantity("coef x")
+        self.wavelet_coeffs_ypos = MultiResolutionQuantity("coef y")
+
         self.wavelet_leaders = MultiResolutionQuantity(self.formalism)
+        self.wavelet_leaders_xpos = MultiResolutionQuantity("leader x")
+        self.wavelet_leaders_ypos = MultiResolutionQuantity("leader y")
+
 
         # Check maximum decomposition level
-        data_len = signal.size
+        data_len = np.min(signal.shape)
     
         max_level = int(np.floor( np.log2( data_len / (self.filter_len+1) ) ))
         self.max_level = min( int(np.floor(np.log2(data_len))), max_level)
@@ -233,10 +239,9 @@ class MFA:
         # Warning if j2 is greater than max_level
         if self.j2 > self.max_level and self.verbose > 0:
             print(" ")
-            print("(!) Warning: Value of j2 is higher than the maximum allowed level.\
-Max level and j2 set to ", self.max_level)
+            print("(!) Warning: Value of j2 is higher than the maximum allowed level. Max level and j2 set to ", self.max_level)
             print(" ")
-
+            
 
         # Check whether to compute wavelet leaders
         if self.formalism == 'wlmf' or self.formalism == 'p-leader':
@@ -247,6 +252,7 @@ Max level and j2 set to ", self.max_level)
 
         # Wavelet decomposition
         approx = signal
+        sidata = signal.shape
 
         for j in range(1, self.max_level+1):
 
@@ -346,56 +352,16 @@ Max level and j2 set to ", self.max_level)
                 approx = LL
                 details = [LH, HL, HH]
 
-
-#                approx[np.isnan(approx)] = np.inf
-#                #print(np.ceil(approx))
-#
-#                for i in range(len(details)):
-#                    detail = details[i]
-#                    detail[np.isnan(detail)] = np.inf
-#                    details[i] = detail
-#
-#                # index of first good value
-#                fp = int( ( self.filter_len - 1 )/2 )
-#                # index of last good value
-#                lp = int( (nj_temp - 1)/2 )
-#
-#
-#                approx[0:fp, :] = np.inf
-#                approx[lp+1:, :] = np.inf
-#
-#                approx[:, 0:fp] = np.inf
-#                approx[:, lp+1:] = np.inf
-#
-#                for idx in range(len(details)):
-#                    details[idx][0:fp, :] = np.inf
-#                    details[idx][lp+1:, :] = np.inf
-#                    details[idx][:, 0:fp] = np.inf
-#                    details[idx][:, lp+1:] = np.inf
-#
-#                #print(np.ceil(details[0]))
-#                #print(details[0].shape, approx.shape)
-#
-#                # replace border with Inf and center content
-#    
-#                finite_approx = approx[fp+2:lp-1, fp+2:lp-1]
-#                approx = np.full(approx.shape, np.inf)
-#                approx[0:lp-5, 0:lp-5] = finite_approx
-#
-#                for idx in range(len(details)):
-#                    finite_details = details[idx][0:lp-5, 0:lp-5]
-#                    details[idx] = np.full(details[idx].shape, np.inf)
-#                    details[idx][0:lp-5, 0:lp-5] = finite_details
-#
-
-
-
                 # normalization 
                 #details = [detail*2**(j*(0.5-1/self.normalization)) for detail in details]
                 details = [detail/(2**(j/self.normalization)) for detail in details]
 
                 # fractional integration
                 details = [detail*2.0**(self.gamint*j) for detail in details]
+
+                #-- get position of leader
+                lesx = np.arange(0, sidata[0] + 1, 2**j)
+                lesy = np.arange(0, sidata[1] + 1, 2**j)
 
                 # remove infinite values and store wavelet coefficients
 
@@ -422,9 +388,11 @@ Max level and j2 set to ", self.max_level)
                 endx = min(endsx) + 1
                 endy = min(endsy) + 1
 
-                finite_coefs = [detail[startx:endx, starty:endy] for detail in details]
-                
+                finite_coefs = [detail[startx:endx, starty:endy] for detail in details]                
+
                 self.wavelet_coeffs.add_values(finite_coefs, j)
+                self.wavelet_coeffs_xpos.add_values(lesx[startx:endx], j)
+                self.wavelet_coeffs_ypos.add_values(lesy[starty:endy], j)
 
                 # wavelet leaders
                 if compute_leaders:
@@ -436,30 +404,10 @@ Max level and j2 set to ", self.max_level)
                         if self.formalism == 'p-leader':
                         #    # detail_abs = (2.0**j)*(detail_abs**self.p)
                             sans_voisin = [2**(2*j)*detail_abs**self.p for detail_abs in sans_voisin]
-                        #    leaders = np.zeros((details_abs[0].shape[0]-2, details_abs[0].shape[1]-2))
-#
-                        #    for row in range(leaders.shape[0]):
-                        #        for col in range(leaders.shape[1]):
-                        #            leaders[row][col] = np.sum([detail_abs[row:row+2, col:col+2] for detail_abs in details_abs])
-                        #            
-                        #    #leaders = (2.0**(-j)*leaders)**(1.0/self.p)
-#
-                        #    leaders = np.power(  np.power(2., -j)*leaders,
-                        #                        1./self.p )
-                        #    
-#
-                        #else:
-                        #    leaders = np.zeros((details_abs[0].shape[0]-2, details_abs[0].shape[1]-2))
-#
-                        #    for row in range(leaders.shape[0]):
-                        #        for col in range(leaders.shape[1]):
-                        #            leaders[row][col] = np.max([detail_abs[row:row+2, col:col+2] for detail_abs in details_abs])
 
                     else:
                         max_index = np.floor( np.array(sans_voisin[0].shape)/2 ).astype(int) 
                         
-                        #print(np.ceil(details))
-
                         for idx in range(len(sans_voisin)):
 
                             sans_voisin[idx] = self._compute_leader_sans_voisin(details[idx], sans_voisin[idx], max_index, j)
@@ -467,45 +415,6 @@ Max level and j2 set to ", self.max_level)
                     
                     for idx in range(len(finite_coefs)):
                         leaders.append(self._compute_leader_from_neigbourhood(sans_voisin[idx]))
-
-                        #details_abs = [detail_abs[:max_index[0], :max_index[1]] for detail_abs in details_abs]
-                        #
-                        #down_sampled_sv = [sans_voisin[0:2*max_index[0]:2, 0:2*max_index[1]:2, :]]
-                        #down_sampled_sv.append(sans_voisin[1:2*max_index[0]:2, 0:2*max_index[1]:2, :])
-                        #down_sampled_sv.append(sans_voisin[0:2*max_index[0]:2, 1:2*max_index[1]:2, :])
-                        #down_sampled_sv.append(sans_voisin[1:2*max_index[0]:2, 1:2*max_index[1]:2, :])
-#
-                        #if self.formalism == 'p-leader':
-                        #    #detail_abs = (2**j)*(detail_abs**self.p)
-                        #    details_abs = [np.power(2., j)*np.power(detail_abs,self.p) for detail_abs in details_abs]
-#
-                        #    print(sans_voisin.shape)
-#
-                        #    sans_voisin = np.sum(down_sampled_sv + details_abs, axis=0)                            
-                        #    leaders = np.zeros((sans_voisin.shape[0]-2, sans_voisin.shape[1]-2))
-#
-                        #    for row in range(leaders.shape[0]):
-                        #        for col in range(leaders.shape[1]):
-                        #            leaders[row][col] = np.sum(sans_voisin[row:row+2, col:col+2, :])
-#
-                        #    #print(np.ceil(detail_abs_combined))
-#
-                        #    #leaders = (2.0**(-j)*leaders)**(1/self.p)
-                        #    leaders = np.power(  np.power(2., -j)*leaders,
-                        #                        1./self.p )
-                        #else:
-                        #    sans_voisin = np.stack(details_abs + down_sampled_sv, axis=2).max(axis=2)
-#
-                        #    leaders = np.zeros((sans_voisin.shape[0]-2, sans_voisin.shape[1]-2))
-#
-                        #    for row in range(leaders.shape[0]):
-                        #        for col in range(leaders.shape[1]):
-                        #            leaders[row][col] = np.max(sans_voisin[row:row+2, col:col+2, :])
-                        #    print(np.ceil(leaders))
-
-                    # remove infinite values and store wavelet leaders
-                    #print(leaders[0].shape)
-                    #print(np.ceil(leaders[0]))
 
                     startsx = []
                     startsy = []
@@ -540,7 +449,12 @@ Max level and j2 set to ", self.max_level)
 
                     if self.formalism == "p-leader":
                         finite_wl = np.power(  np.power(2., -2*j)*finite_wl, 1./self.p )
+
                     self.wavelet_leaders.add_values(finite_wl, j)
+                    self.wavelet_leaders_xpos.add_values(lesx[startx:endx], j) 
+                    self.wavelet_leaders_ypos.add_values(lesy[starty:endy], j)
+                    print(j, lesx[startx:endx])
+                    
                     #print(finite_wl.shape)
                     #print(finite_wl)
 
@@ -691,7 +605,7 @@ Max level and j2 set to ", self.max_level)
 
 
         # warning
-        if (self.hmin < 0) and self.verbose > 0:
+        if (self.hmin < 0) and self.verbose > 0 and self.formalism != "p-leader":
             print("(!) hmin < 0. The value of gamint should be increased.")
 
         # plot
@@ -744,8 +658,8 @@ Max level and j2 set to ", self.max_level)
                 self.wavelet_leaders.values[j] = \
                     self.wavelet_leaders.values[j]*ZPJCorr[ind_j]
         else:
-            print("(!) Warning: eta(p) <= 0, p-Leaders correction was not applied.A smaller value of p \
-(or larger value of gamint) should be selected.")
+            if self.verbose > 0:
+                print("(!) Warning: eta(p) <= 0, p-Leaders correction was not applied. A smaller value of p (or larger value of gamint) should be selected.")
 
 
     def plot_cumulants(self, show = False):
@@ -779,6 +693,102 @@ Max level and j2 set to ", self.max_level)
         if show:
             self.plt.show()
 
+    
+
+    def analyze_no_estimation(self,signal):
+        self._set_and_verify_parameters()
+
+        # Clear previously computed data
+        self.wavelet_coeffs = None
+        self.wavelet_leaders = None
+        self.structure = None
+        self.cumulants = None
+
+        # Compute wavelet coefficients and wavelet leaders
+        self._wavelet_analysis(signal)
+
+        # p-leader correction
+        if self.formalism == 'p-leader':
+            self._estimate_eta_p()
+            self._correct_leaders()
+        else:
+            self.eta_p = np.inf
+
+
+    def perform_estimations_subset(self, subset, j1, j2):
+        old_j1 = self.j1
+        old_j2 = self.j2_eff
+        old_coef = self.wavelet_coeffs
+        old_leaders = self.wavelet_leaders
+
+        self.wavelet_coeffs = MultiResolutionQuantity(self.formalism)
+        self.wavelet_leaders = MultiResolutionQuantity(self.formalism)
+
+        for j in range(j1, j2+1):
+
+            c2c = old_coef.values[j][1] - old_coef.values[j][0]
+
+           # sub_coeff = old_coef.values[j][]
+
+            #sub_leaders = 
+            wavelet_coeffs.add_values(sub_coeff, j)
+            wavelet_leaders.add_values(sub_leaders, j)
+
+        self.j1 = j1
+        self.j2_eff = j2
+  
+
+        self._estimate_hmin()
+
+
+
+
+
+        self.j1 = old_j1
+        self.j2_eff = old_j2
+        self.wavelet_coeffs = old_coef
+        self.wavelet_leaders = old_leaders
+
+    def perform_estimations(self):
+        # Compute hmin
+        #self._estimate_hmin()
+
+        # Compute structure functions and cumulants
+        if self.formalism == 'wcmf':
+            self.structure = StructureFunction(self.wavelet_coeffs,
+                                self.q,
+                                self.j1,
+                                self.j2_eff,
+                                self.wtype)
+            self.cumulants = Cumulants(self.wavelet_coeffs,
+                                self.n_cumul,
+                                self.j1,
+                                self.j2_eff,
+                                self.wtype)
+            self.spectrum = MultifractalSpectrum(self.wavelet_coeffs,
+                                     self.q,
+                                     self.j1,
+                                     self.j2_eff,
+                                     self.wtype)
+
+
+        elif self.formalism == 'wlmf' or self.formalism == 'p-leader':
+            self.structure = StructureFunction(self.wavelet_leaders,
+                                self.q,
+                                self.j1,
+                                self.j2_eff,
+                                self.wtype)
+            self.cumulants = Cumulants(self.wavelet_leaders,
+                                self.n_cumul,
+                                self.j1,
+                                self.j2_eff,
+                                self.wtype)
+
+            self.spectrum = MultifractalSpectrum(self.wavelet_leaders,
+                                     self.q,
+                                     self.j1,
+                                     self.j2_eff,
+                                     self.wtype)
 
     def analyze(self, signal):
         # Verify parameters
@@ -844,8 +854,18 @@ Max level and j2 set to ", self.max_level)
             self.structure.plot(self.STRUCTURE_FIG_LABEL, self.SCALING_FIG_LABEL)
             self.cumulants.plot(self.CUMUL_FIG_LABEL)
             self.spectrum.plot()
+            self.plot_signal(signal)
             self.plt.show()
 
+    def plot_signal(self, signal):
+
+        plt.figure("Original Signal")
+        plt.imshow(signal, cmap=plt.get_cmap('gray'))
+        #plt.grid()
+        #plt.xlabel('h(q)')
+        #plt.ylabel('D(q)')
+        #plt.suptitle(self.name + ' - multifractal spectrum')
+        plt.draw()
 
     def compute_hurst(self, signal):
         """

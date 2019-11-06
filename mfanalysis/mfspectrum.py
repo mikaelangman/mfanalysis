@@ -84,7 +84,7 @@ class MultifractalSpectrum:
             slope_1, intercept_1  = self.utils.linear_regression(x, y, wj) 
             slope_2, intercept_2  = self.utils.linear_regression(x, z, wj) 
 
-            Dq[ind_q] = 1 + slope_1
+            Dq[ind_q] = 2 + slope_1
             hq[ind_q] = slope_2
 
         self.Dq = Dq
