@@ -31,6 +31,7 @@ matplotlib.use("WXAgg")
 import matplotlib.pyplot as plt
 
 from scipy.signal import convolve
+from scipy.signal import convolve2d
 from .cumulants import *
 from .structurefunction import *
 from .multiresquantity import *
@@ -278,12 +279,19 @@ class MFA:
                # OH(:, lp(2) + 1 : end   ) = Inf;
                # OH = OH(:, (1 : 2 : njtemp(2)) + x0 - 1);
 
+
                 OH = conv2d(approx, self.hi, mode = 'full', method='direct')
                 OH[:, :fp] = np.inf
                 OH[:, lp[1]+1:] = np.inf
                 OH_idx = np.arange(0, nj_temp[1], 2) + x0 - 1
                 OH = OH[:, OH_idx]
                 OH[np.isnan(OH)] = np.inf
+
+                #def conv2d(s1, s2, mode, method, axis = 1):
+#
+                #conv = lambda approx: convolve(approx, s2, mode = 'full', method='direct')
+                #s1 = np.apply_along_axis(conv, axis, s1)    
+                #return np.array(s1)
 
                # %-- HH convolution and subsampling
                # HH = conv2(OH, gg1'); HH(isnan (HH)) = Inf;
@@ -449,11 +457,9 @@ class MFA:
 
                     if self.formalism == "p-leader":
                         finite_wl = np.power(  np.power(2., -2*j)*finite_wl, 1./self.p )
-
                     self.wavelet_leaders.add_values(finite_wl, j)
                     self.wavelet_leaders_xpos.add_values(lesx[startx:endx], j) 
                     self.wavelet_leaders_ypos.add_values(lesy[starty:endy], j)
-                    print(j, lesx[startx:endx])
                     
                     #print(finite_wl.shape)
                     #print(finite_wl)
@@ -576,7 +582,6 @@ class MFA:
 
 
         self.j2_eff = min(self.max_level, self.j2) # "effective" j2, used in linear regression
-        
     def _estimate_hmin(self):
         """
         Estimate the value of the uniform regularity exponent hmin using
@@ -714,40 +719,102 @@ class MFA:
         else:
             self.eta_p = np.inf
 
-
+    #Subset is (startx, endx, starty, endy)
     def perform_estimations_subset(self, subset, j1, j2):
         old_j1 = self.j1
         old_j2 = self.j2_eff
-        old_coef = self.wavelet_coeffs
+        #old_coef = self.wavelet_coeffs
         old_leaders = self.wavelet_leaders
+        self.structure = None
+        self.cumulants = None
+        self.spectrum = None
 
-        self.wavelet_coeffs = MultiResolutionQuantity(self.formalism)
-        self.wavelet_leaders = MultiResolutionQuantity(self.formalism)
+        #self.wavelet_coeffs = MultiResolutionQuantity(self.formalism)
+        wavelet_leaders = MultiResolutionQuantity(self.formalism)
 
-        for j in range(j1, j2+1):
+        j1 = max(j1, old_j1)
+        j2_eff = min(j2, old_j2)
 
-            c2c = old_coef.values[j][1] - old_coef.values[j][0]
+        for j in range(1,j2+1):
 
-           # sub_coeff = old_coef.values[j][]
+            #cx = self.wavelet_coeffs_xpos.values[j]
+            #cy = self.wavelet_coeffs_ypos.values[j]
+            lx = self.wavelet_leaders_xpos.values[j]
+            ly = self.wavelet_leaders_ypos.values[j]
 
-            #sub_leaders = 
-            wavelet_coeffs.add_values(sub_coeff, j)
-            wavelet_leaders.add_values(sub_leaders, j)
+            #coeff_idx_x = np.where((cx >= subset[0]) & (cx <= subset[1]))
+            #coeff_idx_y= np.where((cy >= subset[2]) & (cy <= subset[3]))
+            leader_idx_x= np.where((lx >= subset[0]) & (lx <= subset[1]))
+            leader_idx_y= np.where((ly >= subset[2]) & (ly <= subset[3]))
 
-        self.j1 = j1
-        self.j2_eff = j2
-  
+            #sub_coef = [old_coef.values[j][idx][np.min(coeff_idx_x):np.max(coeff_idx_x)+1, np.min(coeff_idx_y):np.max(coeff_idx_y)+1] for idx in range(len(old_coef.values[j]))]
+            sub_leaders = old_leaders.values[j][np.min(leader_idx_x):np.max(leader_idx_x)+1, np.min(leader_idx_y):np.max(leader_idx_y)+1]
 
-        self._estimate_hmin()
+            #if (np.sum(sub_coef) == 0) or (np.sum(sub_leaders) == 0):
+            if np.sum(sub_leaders) == 0:
+                j2_eff = j-1
+                break
+
+            #self.wavelet_coeffs.add_values(sub_coef, j)
+            wavelet_leaders.add_values(sub_leaders, j)  
+
+            #print("j", j)
+            #print(sub_leaders)
+            #print(sub_leaders.shape)
 
 
+        if(j1 < j2_eff):            
+
+            #self._estimate_hmin()
+
+            self.structure = StructureFunction(wavelet_leaders,
+                                self.q,
+                                j1,
+                                j2_eff,
+                                self.wtype)
+            self.cumulants = Cumulants(wavelet_leaders,
+                                self.n_cumul,
+                                j1,
+                                j2_eff,
+                                self.wtype)
+
+            self.spectrum = MultifractalSpectrum(wavelet_leaders,
+                                self.q,
+                                j1,
+                                j2_eff,
+                                self.wtype)
+
+        #Restore mfa object
+        #self.j1 = old_j1
+        #self.j2_eff = old_j2
+        #self.wavelet_coeffs = old_coef
+        #self.wavelet_leaders = old_leaders
+
+        if self.verbose >=2:
+            self.structure.plot(self.STRUCTURE_FIG_LABEL, self.SCALING_FIG_LABEL)
+            self.cumulants.plot(self.CUMUL_FIG_LABEL)
+            self.spectrum.plot()
+            self.plt.show()
 
 
+    def construct_feature_matrix(self):
 
-        self.j1 = old_j1
-        self.j2_eff = old_j2
-        self.wavelet_coeffs = old_coef
-        self.wavelet_leaders = old_leaders
+        cumul = [0] * self.n_cumul
+        if self.cumulants is not None:
+            cumul = self.cumulants.log_cumulants
+
+        dq = [0] * len(self.q)
+        hq = [0] * len(self.q)
+        if self.spectrum is not None:
+            dq = self.spectrum.Dq
+            hq = self.spectrum.hq
+
+        zeta = [0] * len(self.q)
+        if self.structure is not None:
+            zeta = self.structure.zeta
+
+        return np.concatenate([cumul, dq, hq, zeta])
+    #return np.concatenate([mfa.spectrum.Dq, mfa.spectrum.hq])
 
     def perform_estimations(self):
         # Compute hmin
